@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Pet the Cat</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{background:linear-gradient(180deg,#ffe4f1,#e8f1ff);touch-action:none;
+    user-select:none;-webkit-user-select:none;font-family:"Trebuchet MS",system-ui,sans-serif}
+  canvas{display:block;width:100vw;height:100vh;cursor:grab}
+  canvas:active{cursor:grabbing}
+  #hint{position:fixed;left:0;right:0;bottom:6vh;text-align:center;color:#8a6f9e;
+    font-size:18px;transition:opacity 1s;pointer-events:none}
+  #hint.hide{opacity:0}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">pet the cat 🐾</div>
+
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const hint = document.getElementById('hint');
+let W, H, S, CX, CY, t = 0;
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  S = Math.min(W, H) / 330;
+  CX = W / 2; CY = H * .55;
+}
+addEventListener('resize', resize); resize();
+
+/* ---------- pointer ---------- */
+const ptr = { x: -999, y: -999, down: false, mouse: true, speed: 0, inside: false };
+let lastPx = 0, lastPy = 0, hinted = false;
+
+function toLocal(x, y) { return [(x - CX) / S, (y - CY) / S]; }
+function onCat(x, y) {
+  const [lx, ly] = toLocal(x, y);
+  const inHead = ((lx) / 62) ** 2 + ((ly + 40) / 54) ** 2 < 1;
+  const inBody = ((lx) / 70) ** 2 + ((ly - 45) / 58) ** 2 < 1;
+  return inHead ? 'head' : inBody ? 'body' : null;
+}
+cv.addEventListener('pointermove', e => {
+  ptr.speed += Math.hypot(e.clientX - lastPx, e.clientY - lastPy);
+  lastPx = ptr.x = e.clientX; lastPy = ptr.y = e.clientY;
+  ptr.mouse = e.pointerType === 'mouse';
+});
+cv.addEventListener('pointerdown', e => {
+  ptr.down = true; lastPx = ptr.x = e.clientX; lastPy = ptr.y = e.clientY;
+  ptr.mouse = e.pointerType === 'mouse'; startAudio();
+});
+addEventListener('pointerup', () => ptr.down = false);
+cv.addEventListener('pointerleave', () => { ptr.x = ptr.y = -999; ptr.down = false; });
+
+/* ---------- purr ---------- */
+let ac, purrGain;
+function startAudio() {
+  if (ac) return;
+  try {
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(); o.type = 'sawtooth'; o.frequency.value = 24;
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 320;
+    const trem = ac.createGain(); trem.gain.value = .5;
+    const lfo = ac.createOscillator(); lfo.frequency.value = 1.3;
+    const lfoAmt = ac.createGain(); lfoAmt.gain.value = .5;
+    lfo.connect(lfoAmt).connect(trem.gain);
+    purrGain = ac.createGain(); purrGain.gain.value = 0;
+    o.connect(lp).connect(trem).connect(purrGain).connect(ac.destination);
+    o.start(); lfo.start();
+  } catch (e) {}
+}
+
+/* ---------- cat state ---------- */
+let happy = 0, petZone = null, squish = 0, blinkT = 3, blink = 0, tailSpeed = 2;
+const hearts = [];
+
+function update(dt) {
+  t += dt;
+  const zone = onCat(ptr.x, ptr.y);
+  const moving = ptr.speed > 2;
+  const petting = zone && moving && (ptr.down || ptr.mouse);
+  ptr.speed = 0;
+
+  if (petting) {
+    happy = Math.min(1, happy + dt * .9);
+    petZone = zone;
+    squish = Math.min(1, squish + dt * 6);
+    if (Math.random() < dt * (4 + happy * 8)) {
+      hearts.push({ x: ptr.x + (Math.random() - .5) * 30, y: ptr.y - 10, vx: (Math.random() - .5) * 30, life: 1, s: .7 + Math.random() * .6 });
+    }
+    if (!hinted) { hinted = true; hint.classList.add('hide'); }
+  } else {
+    happy = Math.max(0, happy - dt * .25);
+    squish = Math.max(0, squish - dt * 4);
+  }
+  tailSpeed += ((2 + happy * 4) - tailSpeed) * dt * 2;
+
+  blinkT -= dt;
+  if (blinkT <= 0) { blink = .15; blinkT = 2.5 + Math.random() * 3; }
+  blink = Math.max(0, blink - dt);
+
+  for (let i = hearts.length - 1; i >= 0; i--) {
+    const h = hearts[i];
+    h.life -= dt * .7; h.y -= 70 * dt; h.x += h.vx * dt + Math.sin(t * 4 + i) * 15 * dt;
+    if (h.life <= 0) hearts.splice(i, 1);
+  }
+
+  if (purrGain && ac) purrGain.gain.setTargetAtTime(happy > .2 ? happy * .12 : 0, ac.currentTime, .2);
+}
+
+/* ---------- drawing ---------- */
+function ell(x, y, rx, ry, rot = 0) { ctx.beginPath(); ctx.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2); ctx.fill(); }
+function tri(a, b, c, d, e, f) { ctx.beginPath(); ctx.moveTo(a, b); ctx.lineTo(c, d); ctx.lineTo(e, f); ctx.closePath(); ctx.fill(); }
+
+function drawCat() {
+  const fur = '#f6a96b', dark = '#e08a4c', cream = '#fff3e6', pink = '#ffb3c8', ink = '#3d2f4a';
+  const breathe = Math.sin(t * 2) * 1.5;
+  const [lx, ly] = toLocal(ptr.x, ptr.y);
+  const lean = happy > .1 && ptr.x > -900 ? Math.max(-1, Math.min(1, lx / 80)) * .12 * happy : 0;
+
+  ctx.save(); ctx.translate(CX, CY); ctx.scale(S, S);
+
+  // shadow
+  ctx.fillStyle = 'rgba(120,90,140,.12)'; ell(0, 102, 85, 12);
+
+  // tail
+  ctx.strokeStyle = fur; ctx.lineWidth = 16; ctx.lineCap = 'round';
+  const sw = Math.sin(t * tailSpeed) * 14;
+  ctx.beginPath(); ctx.moveTo(55, 85);
+  ctx.bezierCurveTo(115, 90, 115 + sw * .3, 30, 95 + sw, 5); ctx.stroke();
+  ctx.strokeStyle = dark; ctx.lineWidth = 16;
+  ctx.beginPath(); ctx.moveTo(98 + sw * .9, 14); ctx.lineTo(95 + sw, 5); ctx.stroke();
+
+  // body
+  const bs = 1 + (petZone === 'body' ? squish * .03 : 0);
+  ctx.save(); ctx.translate(0, 50 + breathe); ctx.scale(1 + (bs - 1), 1 - (bs - 1));
+  ctx.fillStyle = fur; ell(0, 0, 68, 55);
+  ctx.fillStyle = dark; ell(-40, -15, 10, 5, .5); ell(42, -12, 10, 5, -.5); ell(-48, 5, 9, 4, .3);
+  ctx.fillStyle = cream; ell(0, 12, 36, 38);
+  ctx.restore();
+
+  // paws
+  ctx.fillStyle = cream; ell(-26, 100, 18, 11); ell(26, 100, 18, 11);
+  ctx.strokeStyle = 'rgba(200,150,120,.6)'; ctx.lineWidth = 1.5;
+  [-26, 26].forEach(px => { ctx.beginPath(); ctx.moveTo(px - 5, 96); ctx.lineTo(px - 5, 104); ctx.moveTo(px + 5, 96); ctx.lineTo(px + 5, 104); ctx.stroke(); });
+
+  // head
+  const hs = petZone === 'head' ? squish * .05 : 0;
+  ctx.save(); ctx.translate(0, -40 + breathe * .5); ctx.rotate(lean); ctx.scale(1 + hs, 1 - hs);
+
+  // ears (droop a bit when happy)
+  const ed = happy * 6;
+  ctx.fillStyle = fur; tri(-56, -20 + ed, -46, -78 + ed * 1.5, -12, -48); tri(56, -20 + ed, 46, -78 + ed * 1.5, 12, -48);
+  ctx.fillStyle = pink; tri(-46, -30 + ed, -42, -64 + ed * 1.4, -20, -46); tri(46, -30 + ed, 42, -64 + ed * 1.4, 20, -46);
+
+  ctx.fillStyle = fur; ell(0, 0, 64, 54);
+  ctx.fillStyle = dark; ell(0, -46, 8, 4); ell(-15, -43, 6, 3, .3); ell(15, -43, 6, 3, -.3);
+  ctx.fillStyle = cream; ell(0, 22, 30, 20);
+
+  // blush (stronger when happy)
+  ctx.fillStyle = `rgba(255,120,160,${.3 + happy * .4})`; ell(-36, 14, 12, 7); ell(36, 14, 12, 7);
+
+  // eyes
+  ctx.strokeStyle = ink; ctx.fillStyle = ink; ctx.lineWidth = 4; ctx.lineCap = 'round';
+  if (happy > .35) {
+    [-22, 22].forEach(ex => { ctx.beginPath(); ctx.arc(ex, 2, 10, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke(); });
+  } else if (blink > 0) {
+    [-22, 22].forEach(ex => { ctx.beginPath(); ctx.moveTo(ex - 9, -2); ctx.lineTo(ex + 9, -2); ctx.stroke(); });
+  } else {
+    const look = ptr.x > -900 ? [Math.max(-1, Math.min(1, lx / 150)) * 3, Math.max(-1, Math.min(1, (ly + 40) / 150)) * 3] : [0, 0];
+    [-22, 22].forEach(ex => {
+      ctx.fillStyle = ink; ell(ex + look[0], -2 + look[1], 10, 12);
+      ctx.fillStyle = '#fff'; ell(ex + look[0] + 3, -6 + look[1], 4, 4); ell(ex + look[0] - 3, 3 + look[1], 2, 2);
+    });
+  }
+
+  // nose & mouth
+  ctx.fillStyle = '#ff8fb8'; tri(-6, 14, 6, 14, 0, 20);
+  ctx.strokeStyle = ink; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(0, 20); ctx.lineTo(0, 24); ctx.stroke();
+  ctx.beginPath(); ctx.arc(-6, 24, 6, 0, Math.PI); ctx.arc(6, 24, 6, 0, Math.PI); ctx.stroke();
+
+  // whiskers
+  ctx.strokeStyle = 'rgba(61,47,74,.45)'; ctx.lineWidth = 2;
+  [-1, 1].forEach(d => {
+    ctx.beginPath();
+    ctx.moveTo(d * 32, 18); ctx.lineTo(d * 72, 10);
+    ctx.moveTo(d * 32, 24); ctx.lineTo(d * 72, 26);
+    ctx.stroke();
+  });
+  ctx.restore();
+
+  // purr text
+  if (happy > .4) {
+    ctx.globalAlpha = Math.min(1, (happy - .4) * 3) * (.6 + Math.sin(t * 6) * .2);
+    ctx.fillStyle = '#c47aa0'; ctx.font = 'italic 16px "Trebuchet MS",sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('purr~', 70 + Math.sin(t * 20) * 1, -90 + Math.cos(t * 23) * 1);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
+function drawHearts() {
+  hearts.forEach(h => {
+    ctx.save(); ctx.translate(h.x, h.y); ctx.scale(h.s, h.s);
+    ctx.globalAlpha = Math.max(0, h.life);
+    ctx.fillStyle = '#ff6fa3';
+    ctx.beginPath(); ctx.moveTo(0, 12);
+    ctx.bezierCurveTo(-16, 0, -12, -14, 0, -5);
+    ctx.bezierCurveTo(12, -14, 16, 0, 0, 12); ctx.fill();
+    ctx.restore();
+  });
+  ctx.globalAlpha = 1;
+}
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  update(dt);
+  ctx.clearRect(0, 0, W, H);
+  drawCat();
+  drawHearts();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
